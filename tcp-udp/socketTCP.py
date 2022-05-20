@@ -2,11 +2,25 @@ import socket
 import random
 import time
 from errors import SeqError, NotConnectedException, FinError
-from copy import deepcopy
+
 
 SYN = b'SYN'
 ACK = b'ACK'
 FIN = b'FIN'
+
+class TCPHeader:
+    def __init__(self,syn, ack, fin, seq, data):
+        self.syn = syn
+        self.ack = ack
+        self.fin = fin
+        self.seq = seq
+        self.data = data
+
+
+
+    
+
+
 
 class socketTCP:
     '''
