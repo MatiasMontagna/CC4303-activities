@@ -1,5 +1,9 @@
+'''
+Custom errors used in TCPSocket.py
+'''
+
 class FinError(Exception):
-    """Raised when end of communication between two socketTCP fails"""
+    """Raised when end of communication between two TCPSocket's fails"""
     pass
 
 class SeqError(Exception):
@@ -10,9 +14,6 @@ class SyncError(Exception):
     """Raised when syncronization between two TCPSocket's fails"""
     pass
 
-class NotConnectedException(Exception):
-    """Raised when attempting to send data without being connected to a socketTCP"""
-    pass
-
 class DataSizeException(Exception):
     """Raised when attempting to send packet data that surpasses 64 bytes"""
+    pass

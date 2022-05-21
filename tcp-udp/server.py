@@ -1,27 +1,32 @@
-from socketTCP2 import TCPSocket
+from TCPSocket import TCPSocket, receive_full_message
 
-BUFF_SIZE=1024
+BUFF_SIZE=128
 ADDRESS = ('localhost', 8888)
 server = TCPSocket()
 server.bind(ADDRESS)
-server.settimeout(3)
+server.settimeout(0.5)
 print("server running in ", ADDRESS)
+
 while True:
 
     print("waiting connection")
-    conn,addr = server.accept()
+    connection, addr = server.accept()
     print("connection stablished with  {0}".format(addr))
-    print("server seq number: ", server.seq)
+    print("server connection seq number: ", connection.seq)
 
-    
+    while connection.destination_addr!= None:
+        message = receive_full_message(connection, BUFF_SIZE)
 
-    # while server.other_addr != None:  
+        if message == None:
+            
+            continue
 
-    #     data = server.recv(BUFF_SIZE)
+        print("received: ", message)
+        connection.send(message.encode())
+        print("message sent back")
+        
+    connection.close()
+    print("connection closed")
 
-    #     if data !=None:
-    #         print("received: ", data.decode())
-    #         server.send(data)
-    #     else:
-    #         print("connection with {0} has ended".format(addr))
+
         
