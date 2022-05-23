@@ -2,6 +2,8 @@ import socket
 import sys
 import random
 from math import ceil
+from slidingWindow import SlidingWindow
+from timerList import TimerList
 from errors import  DataSizeException, SeqError, FinError, SyncError
 
 
@@ -64,6 +66,7 @@ class TCPSocket:
         self.seq = 0
         self.buff_size = 1024
         self.bytes_left = 0
+        self.window_size = 3
         self.last_message = None
         self.destination_addr = None
         self.origin_addr = None
@@ -182,7 +185,7 @@ class TCPSocket:
     def send_using_stop_and_wait(self, message:bytes):
         
         message_length, n_chunks, message_chunks = divide_message(message.decode(), 64)
-        not_send = [True for chunk in message_chunks]   
+        #not_send = [True for chunk in message_chunks]   
 
         #len of data is sent
         len_info = TCPHeader().build_string(0, 0, 0, self.seq, str(message_length))
@@ -233,7 +236,87 @@ class TCPSocket:
                 continue
         
         return message_length
-    
+
+    def send_all_window(self, data_window, timer_list):
+        '''
+        Builds segments from window, sends the data and enables timers
+        '''
+        for i in range(self.window_size):
+            current_data = data_window.get_data(i)
+            if current_data == None:
+                break
+            current_seq = data_window.get_sequence_number(i)
+            current_segment = TCPHeader().build_string(0, 0, 0, current_seq, current_data)
+            self.socket_udp.sendto(current_segment.encode(), self.destination_addr)
+            timer_list.start_timer(i)
+
+            
+    def send_using_go_back(self, message):
+        #divide message and build sliding window
+        message_length, n_chunks, message_chunks = divide_message(message.decode(), 64)
+        data_list = [message_length] + message_chunks
+        data_window = SlidingWindow(self.window_size, data_list, self.seq)
+        wnd_index = 0
+
+        #timer setup
+        timer_list = TimerList(self.timeout, self.window_size)
+        t_index = 0
+
+        #first window is sent
+        self.send_all_window(data_window, timer_list)
+
+        #socket is set to non blocking mode, to use TimerList instead
+        self.socket.setblocking(False) #maybe change location of this piece of code
+
+        while True:
+            try:
+                # en cada iteración vemos si nuestro timer hizo timeout
+                timeouts = timer_list.get_timed_out_timers()
+                # si hizo timeout reenviamos el último segmento
+                if len(timeouts) > 0:
+                    #all the window is sent back
+                    self.send_all_window(data_window, timer_list)
+
+                answer, _ = self.socket.recvfrom(self.buff_size)
+
+            except BlockingIOError:
+                # como nuestro socket no es bloqueante, si no llega nada entramos aquí y continuamos (hacemos esto en vez de usar threads)
+                continue
+
+            else:
+                # si no entramos al except (y no hubo otro error) significa que llegó algo!
+                # si la respuesta es un ack válido
+
+                parsed_answer = TCPHeader().parse(answer.decode())
+                if parsed_answer == data_window.get_sequence_number(0): # esto se debe cambiar
+                    # detenemos el timer
+                    timer_list.stop_timer(0)
+
+                    # actualizamos el segmento
+                    data_window.move_window(1)
+                    
+                    #last element of window is current element
+                    current_data = data_to_send.get_data(self.window_size-1)
+                    
+                    # si ya mandamos el mensaje completo tenemos current_data == None
+                    if current_data == None:
+                        return
+
+                    # si no, actualizamos el número de secuencia y mandamos el nuevo segmento
+                    else:     
+                        current_seq = data_to_send.get_sequence_number(self.window_size-1)
+                        self.seq = current_seq
+                        current_segment = self.wrap_data_as_segment(current_data, current_seq)
+
+                        self.socket_udp.sendto(current_segment.encode(), self.destination_address)
+            
+                        # y ponemos a correr de nuevo el timer
+                        timer_list.start_timer(self.window_size-1)
+
+
+
+
+
     def recv_using_stop_and_wait(self, buff_size):
         while self.bytes_left == 0: #new recv
             try:
