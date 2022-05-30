@@ -21,7 +21,9 @@ print(data_window)
 # +------+---------+---------+---------+
 
 # Avanzamos la ventana en 2 espacios y luego otros 3
+print("posibles seq son: ", data_window.possible_sequence_numbers)
 data_window.move_window(2)
+print("posibles seq son: ", data_window.possible_sequence_numbers)
 data_window.move_window(3)
 print(data_window)
 
@@ -30,6 +32,7 @@ data_window.move_window(1)
 data_window.move_window(3)
 if data_window.get_sequence_number(2) == None and data_window.get_data(2) == None:
     print("el último elemento de la ventana es igual a None")
+    print("posibles seq son: ", data_window.possible_sequence_numbers)
     print(data_window) 
 
 # También podemos crear ventanas vacías de la siguiente forma:

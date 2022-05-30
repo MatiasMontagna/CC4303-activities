@@ -2,6 +2,7 @@ import socket
 import sys
 import random
 from math import ceil
+from collections import deque
 from slidingWindow import SlidingWindow
 from timerList import TimerList
 from errors import  DataSizeException, SeqError, FinError, SyncError
@@ -339,9 +340,152 @@ class TCPSocket:
                         # y ponemos a correr de nuevo el timer
                         timer_list.start_timer(self.window_size-1)
 
-    def send_using_selective_repeat(self, message):
-        ...
+    def resend_timed_out_segments(self, data_window:SlidingWindow, timeouts:TimerList):
+        for index in timeouts.get_timed_out_timers():
+            data = data_window.get_data(index)
+            seq = data_window.get_sequence_number(index)
+            segment = TCPHeader().build_string(0, 0, 0, seq, data)
+            self.socket.sendto(segment.encode(), self.destination_addr)
+            timeouts.start_timer(index)
 
+    def move_timers(self, timeouts: TimerList, steps:int):     
+        #deque object built from existing lists
+        deque_starting_times = deque(timeouts.starting_times)
+        deque_timer_list = deque(timeouts.timer_list)
+        
+        #deque rotate method moves the whole list to the left 'steps' times
+        deque_starting_times.rotate(-steps)
+        deque_timer_list.rotate(-steps)
+        
+        #reassign as lists to TimerList object
+        timeouts.starting_times = list(deque_starting_times)
+        timeouts.timer_list = list(deque_timer_list)
+
+    def update_sender_window(self, data_window:SlidingWindow , timeouts:TimerList):
+        '''
+        Updates the sliding window of the sender in selective repeat.
+        Also updates timers list in order to still match positions with the window
+        Returns the steps the window moved.
+        '''
+
+        #indexes of window slots that still don't receive ack
+        not_received_indexes = [index for (index,active_timer) in enumerate(timeouts.timer_list) if active_timer == True]
+        
+        if len(not_received_indexes) == 0:
+            #all acks were received, the entire window is moved
+            steps = self.window_size
+            data_window.move_window(steps)
+            
+        else:
+            steps = not_received_indexes[0]
+            if steps > 0:
+                data_window.move_window(steps)    # window moves as much as it can
+                self.move_timers(timeouts, steps) # timers are moved to keep syncronization
+        
+        return steps           
+
+    def update_current_data(self, data_window:SlidingWindow , timeouts:TimerList):
+        indexes = []
+        data_list = []
+        for (index, has_timer) in enumerate(timeouts.timer_list):
+            if not has_timer:
+                data =  data_window.get_data(index)
+                if data != None:
+                    indexes.append(index)
+                    data_list.append(data)
+        if len(data_list)==1:
+            return indexes[0], data_list[0]
+        
+        return indexes, data_list
+
+    def send_using_selective_repeat(self, message):
+        counter=0
+        #divide message and build sliding window
+        message_length, n_chunks, message_chunks = divide_message(message.decode(), 64)
+        data_list = [message_length] + message_chunks
+        data_window = SlidingWindow(self.window_size, data_list, self.seq)
+        self.possible_sequence_numbers = data_window.possible_sequence_numbers
+        
+        #this maybe not
+        wnd_index = 0
+        t_index = 0
+
+        print("possible numbers are", data_window.possible_sequence_numbers)
+
+        timer_list = TimerList(self.timeout, self.window_size)
+        
+
+        #first window is sent
+        self.send_all_window(data_window, timer_list)
+
+        #socket is set to non blocking mode, to use TimerList instead
+        self.socket.setblocking(False) 
+
+        while True:
+            try:
+                timeouts = timer_list.get_timed_out_timers()
+                
+                if len(timeouts) > 0: #if a segment timed out, we send it again
+                    self.resend_timed_out_segments(data_window,timeouts)
+
+                answer, _ = self.socket.recvfrom(self.buff_size)
+
+            except BlockingIOError:
+                counter+=1
+                if counter%100000 == 0:
+                    print(self.last_ack_received)
+                continue
+
+            else:
+                #print("llegó algo")
+                ack = TCPHeader().parse(answer.decode())
+                #print(ack)
+                self.last_ack_received = ack
+                #print("el seq que tengo es ",data_window.get_sequence_number(0))
+
+                seqs_in_window = [data_window.get_sequence_number(i) for i in range(self.window_size)]
+
+                if ack.seq in seqs_in_window:
+                    #to which window slot belongs this ack
+                    ack_window_index = seqs_in_window.index(ack.seq) 
+
+                    timer_list.stop_timer(ack_window_index)
+
+                    #here handle how much the window has to move
+                    steps_window_moved = self.update_window(data_window, timeouts)
+                    
+                    if steps_window_moved == 0:
+                        # window can't move and hasn't timed out yet. We must wait
+                        continue
+
+                    #here handle which data must be sent next
+                    current_index, current_data = self.update_current_data(data_window, timeouts)
+    
+                    if current_data == None: # the message is completely sent
+                        self.update_seq_go_back_n()
+                        print("send finished")
+                        print("last message is: ", self.last_message)
+                        print("window is:", data_window)
+                        return
+
+                    # elif isinstance(current_data, list):
+                    # #here handle the case where multiple messages are send
+                    #     for i, data in enumerate(current_data):
+                    #         current_seq = data_window.get_sequence_number(current_index[i])
+                    #         self.seq = current_seq
+                    #         current_segment = TCPHeader().build_string(0, 0, 0, current_seq, data)
+                    #         self.socket.sendto(current_segment.encode(), self.destination_addr)
+                    #         self.last_message = current_segment
+                    #         # we start time again
+                    #         timer_list.start_timer(current_index[i])
+                    else:     
+                        current_seq = data_window.get_sequence_number(current_index)
+                        self.seq = current_seq
+                        current_segment = TCPHeader().build_string(0, 0, 0, current_seq, current_data)
+                        self.socket.sendto(current_segment.encode(), self.destination_addr)
+                        self.last_message = current_segment
+                        # we start time again
+                        timer_list.start_timer(current_index)
 
         
 
