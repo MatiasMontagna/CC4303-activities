@@ -339,6 +339,12 @@ class TCPSocket:
                         # y ponemos a correr de nuevo el timer
                         timer_list.start_timer(self.window_size-1)
 
+    def send_using_selective_repeat(self, message):
+        ...
+
+
+        
+
     def valid_ack_seq(self, incoming_seq, current_seq):
         return incoming_seq == current_seq
 
@@ -362,6 +368,17 @@ class TCPSocket:
 
     def calc_possible_sequence_numbers(self):
         self.possible_sequence_numbers = [self.seq + i for i in range(2 * self.window_size)]
+
+    
+    def recv_using_selective_repeat(self, buff_size):
+        ...
+
+
+
+
+
+
+
 
     def recv_using_go_back_n(self, buff_size):
 
@@ -519,7 +536,7 @@ class TCPSocket:
         if self.destination_addr == None:
             self.socket.close()
             return
-            
+
         self.socket.setblocking(True)
         fin_header = TCPHeader().build_string(0, 0, 1, self.seq)
         self.last_message = fin_header

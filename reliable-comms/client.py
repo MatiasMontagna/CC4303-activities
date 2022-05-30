@@ -1,8 +1,8 @@
 from TCPSocket import TCPSocket, receive_full_message
 
 BUFF_SIZE= 128
-#MODE = "go_back_n"
-MODE = "stop_and_wait"
+MODE = "go_back_n"
+#MODE = "stop_and_wait"
 
 client = TCPSocket()
 client.connect(('localhost', 8888))
