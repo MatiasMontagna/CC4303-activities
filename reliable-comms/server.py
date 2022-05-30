@@ -2,9 +2,11 @@ from TCPSocket import TCPSocket, receive_full_message
 
 BUFF_SIZE=128
 ADDRESS = ('localhost', 8888)
+MODE= "go_back_n"
+#MODE= "stop_and_wait"
 server = TCPSocket()
 server.bind(ADDRESS)
-server.settimeout(0.5)
+server.settimeout(2)
 print("server running in ", ADDRESS)
 
 while True:
@@ -14,14 +16,16 @@ while True:
     print("server connection seq number: ", connection.seq)
 
     while connection.destination_addr!= None:
-        message = receive_full_message(connection, BUFF_SIZE)
+        message = receive_full_message(connection, BUFF_SIZE, mode= MODE)
 
         if message == None:
             continue
 
-        print("received: ", message)
-        connection.send_using_stop_and_wait(message.encode())
+        #print("received: ", message)
+        print("my seq is:", connection.seq)
+        connection.send(message.encode(), mode= MODE)
         print("message sent back")
+        print("my seq is:", connection.seq)
 
     connection.close()
     print("connection closed")
