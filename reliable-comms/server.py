@@ -2,8 +2,10 @@ from TCPSocket import TCPSocket, receive_full_message
 
 BUFF_SIZE=128
 ADDRESS = ('localhost', 8888)
-MODE= "go_back_n"
-#MODE= "stop_and_wait"
+
+# MODE= "selective_repeat"
+# MODE= "stop_and_wait"
+MODE = "go_back_n"
 server = TCPSocket()
 server.bind(ADDRESS)
 server.settimeout(2)
@@ -21,7 +23,7 @@ while True:
         if message == None:
             continue
 
-        #print("received: ", message)
+        print("received: ", message)
         print("my seq is:", connection.seq)
         connection.send(message.encode(), mode= MODE)
         print("message sent back")

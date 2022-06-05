@@ -102,7 +102,7 @@ class SlidingWindow:
             current_seq_numbers = [self.get_sequence_number(i) for i in range(self.window_size) if self.get_sequence_number(i) != None]
             if len(current_seq_numbers) == self.window_size:
                 if seq != current_seq_numbers[window_index]:
-                        raise Exception("ERROR in SlidingWindow, put_data(): Window is not empty, invalid sequence number")
+                    raise Exception("ERROR in SlidingWindow, put_data(): Window is not empty, invalid sequence number")
             else:
                 
                 for i in range(self.window_size):
@@ -116,6 +116,9 @@ class SlidingWindow:
                             else:
                                 valid_range_list.append(valid_seq_number)
                         if valid_range_list[window_index] != seq:
+                            print(seq)
+                            print(valid_range_list)
+                            print(valid_range_list[window_index])
                             raise Exception("ERROR in SlidingWindow, put_data(): Window is not empty, invalid sequence number")
             self.window[window_index]["data"] = data
             self.window[window_index]["seq"] = seq

@@ -1,8 +1,9 @@
 from TCPSocket import TCPSocket, receive_full_message
 
 BUFF_SIZE= 128
-MODE = "go_back_n"
+#MODE = "selective_repeat"
 #MODE = "stop_and_wait"
+MODE = "go_back_n"
 
 client = TCPSocket()
 client.connect(('localhost', 8888))
@@ -14,13 +15,11 @@ file = open('lorem-ipsum.txt', 'r')
 msg =file.read()
 
 client.send(msg.encode(),mode=MODE)
-#print("sent: ", msg)
-print(client.bytes_left)
+print("sent: ", msg)
 print("seq is: ",client.seq)
 response = receive_full_message(client, BUFF_SIZE, mode=MODE)
-#print("Got back: ", response)
+print("Got back: ", response)
 print("seq is: ",client.seq)
-print("ATEMPTING TO CLOSE CONNECTION")
-print("------------------------------")
 client.close()
+print("connection closed")
 

@@ -37,11 +37,14 @@ if data_window.get_sequence_number(2) == None and data_window.get_data(2) == Non
 
 # También podemos crear ventanas vacías de la siguiente forma:
 empty_window = sw.SlidingWindow(window_size, [], initial_seq)
-print(empty_window)
+#print(empty_window)
+#print("empty window seq is: ", empty_window.get_sequence_number(1))
 
 # y podemos añadir datos a esta ventana
 add_data = "Hola"
 seq = initial_seq + 2
 window_index = 2
 empty_window.put_data(add_data, seq, window_index)
-print(empty_window)
+#print(empty_window)
+print(data_window.window)
+print("".join(data_window.data_list[1:]))

@@ -74,6 +74,7 @@ class TCPSocket:
         self.timeout = 3
         self.last_ack_received = None
         self.possible_sequence_numbers = None
+        self.receiver_window = None  # for selective repeat
 
     def settimeout(self, timeout_seconds):
         '''sets maximum waiting time (in seconds).'''
@@ -193,7 +194,7 @@ class TCPSocket:
         elif mode == "go_back_n":
             return self.recv_using_go_back_n(buff_size)
         elif mode == "selective_repeat":
-            return self.recv_using_selective_repeat(message)
+            return self.recv_using_selective_repeat(buff_size)
         else:
             raise Exception("ERROR in TCPSocket, recv(): Exhausted all possible modes")
 
@@ -262,6 +263,7 @@ class TCPSocket:
                 break
             current_seq = data_window.get_sequence_number(i)
             current_segment = TCPHeader().build_string(0, 0, 0, current_seq, current_data)
+            print(current_segment)
             self.socket.sendto(current_segment.encode(), self.destination_addr)
             timer_list.start_timer(i)
             self.last_message = current_segment
@@ -307,12 +309,14 @@ class TCPSocket:
             else:
                 # si no entramos al except (y no hubo otro error) significa que llegó algo!
                 # si la respuesta es un ack válido
-                print("llegó algo")
+                #print("llegó algo")
                 parsed_answer = TCPHeader().parse(answer.decode())
                 print(parsed_answer)
                 self.last_ack_received = parsed_answer
                 print("el seq que tengo es ",data_window.get_sequence_number(0))
-                if parsed_answer.seq == data_window.get_sequence_number(0): # esto se debe cambiar
+                valid_seq_numbers = [data_window.get_sequence_number(i) for i in range(self.window_size)]
+                #if parsed_answer.seq == data_window.get_sequence_number(0): # esto se debe cambiar
+                if parsed_answer.seq in valid_seq_numbers:
                     # detenemos el timer
                     timer_list.stop_timer(0)
 
@@ -339,6 +343,12 @@ class TCPSocket:
                         self.last_message = current_segment
                         # y ponemos a correr de nuevo el timer
                         timer_list.start_timer(self.window_size-1)
+                else:
+                    print("segmento repetido")
+                    print(parsed_answer)
+                    print("my seq is:", self.seq)
+                    #segmento repetido
+                    self.socket.sendto(self.last_message.encode(), self.destination_addr)
 
     def resend_timed_out_segments(self, data_window:SlidingWindow, timeouts:TimerList):
         for index in timeouts.get_timed_out_timers():
@@ -390,25 +400,24 @@ class TCPSocket:
         for (index, has_timer) in enumerate(timeouts.timer_list):
             if not has_timer:
                 data =  data_window.get_data(index)
-                if data != None:
-                    indexes.append(index)
-                    data_list.append(data)
+                indexes.append(index)
+                data_list.append(data)
+                if data == None:
+                    break
         if len(data_list)==1:
             return indexes[0], data_list[0]
         
-        return indexes, data_list
+        return indexes[0], data_list[0]
 
     def send_using_selective_repeat(self, message):
         counter=0
+        print("initial seq is:", self.seq)
         #divide message and build sliding window
         message_length, n_chunks, message_chunks = divide_message(message.decode(), 64)
         data_list = [message_length] + message_chunks
         data_window = SlidingWindow(self.window_size, data_list, self.seq)
         self.possible_sequence_numbers = data_window.possible_sequence_numbers
         
-        #this maybe not
-        wnd_index = 0
-        t_index = 0
 
         print("possible numbers are", data_window.possible_sequence_numbers)
 
@@ -420,13 +429,13 @@ class TCPSocket:
 
         #socket is set to non blocking mode, to use TimerList instead
         self.socket.setblocking(False) 
-
-        while True:
+        message_not_send = True
+        while message_not_send:
             try:
                 timeouts = timer_list.get_timed_out_timers()
                 
                 if len(timeouts) > 0: #if a segment timed out, we send it again
-                    self.resend_timed_out_segments(data_window,timeouts)
+                    self.resend_timed_out_segments(data_window,timer_list)
 
                 answer, _ = self.socket.recvfrom(self.buff_size)
 
@@ -452,20 +461,17 @@ class TCPSocket:
                     timer_list.stop_timer(ack_window_index)
 
                     #here handle how much the window has to move
-                    steps_window_moved = self.update_window(data_window, timeouts)
+                    steps_window_moved = self.update_sender_window(data_window, timer_list)
                     
                     if steps_window_moved == 0:
                         # window can't move and hasn't timed out yet. We must wait
                         continue
 
                     #here handle which data must be sent next
-                    current_index, current_data = self.update_current_data(data_window, timeouts)
+                    current_index, current_data = self.update_current_data(data_window, timer_list)
     
                     if current_data == None: # the message is completely sent
-                        self.update_seq_go_back_n()
-                        print("send finished")
-                        print("last message is: ", self.last_message)
-                        print("window is:", data_window)
+                        self.seq = TCPHeader().parse(self.last_message).seq 
                         return
 
                     # elif isinstance(current_data, list):
@@ -484,8 +490,10 @@ class TCPSocket:
                         current_segment = TCPHeader().build_string(0, 0, 0, current_seq, current_data)
                         self.socket.sendto(current_segment.encode(), self.destination_addr)
                         self.last_message = current_segment
+                        #self.update_seq_go_back_n()
                         # we start time again
                         timer_list.start_timer(current_index)
+        
 
         
 
@@ -513,47 +521,163 @@ class TCPSocket:
     def calc_possible_sequence_numbers(self):
         self.possible_sequence_numbers = [self.seq + i for i in range(2 * self.window_size)]
 
-    
+
     def recv_using_selective_repeat(self, buff_size):
-        ...
+        counter = 0
+        self.socket.setblocking(True)
+        self.socket.settimeout(self.timeout)
+        while self.bytes_left == 0: #new recv
+            try:
+                data, _ = self.socket.recvfrom(buff_size)
+                segment = TCPHeader().parse(data.decode())
+
+                if segment.fin == 1: #close connection
+                    #print("fin msg arrived: ", segment)
+                    self.recv_close()
+                    return
+                
+
+                elif (not self.valid_ack_seq(segment.seq, self.seq)) or segment.ack == 1: #repeated message
+                    print("se reenvia mensaje. llegó {0} y tengo {1}".format(segment.seq,self.seq))
+                    print(segment)
+                    if segment.seq < self.seq:
+                        ack = TCPHeader().build_string(0, 1, 0, segment.seq)
+                        #print("se enviará: ", self.last_message)
+                        self.socket.sendto(ack.encode(), self.destination_addr)
+                
+                else: #new message
+                    print(segment)
+                    bytes_received = segment.byte_len()
+                    message_length = int(segment.data)
+                    self.bytes_left = message_length
+                    ack = TCPHeader().build_string(0, 1, 0, self.seq)
+                    self.socket.sendto(ack.encode(), self.destination_addr)
+                    
+                    #sliding window built from message length
+                    n_chunks = ceil(message_length/64) 
+                    base_list = ["" for _ in range(n_chunks)]
+                    data_list = [message_length] + base_list
+                    self.receiver_window = SlidingWindow(self.window_size, data_list, self.seq)
+
+                    self.possible_sequence_numbers = self.receiver_window.possible_sequence_numbers
+                    print(self.possible_sequence_numbers)
+
+                    self.last_message = ack
+                    self.last_ack_received = segment
+
+            except TimeoutError:
+                #print(self.last_ack_received)
+                continue
+
+        byte_cap = min(self.bytes_left, buff_size)
+        acum_message = ""
+
+        while len(acum_message.encode()) < byte_cap:
+            try:
+                
+                data, _ = self.socket.recvfrom(buff_size)
+                segment = TCPHeader().parse(data.decode())
+
+                seqs_in_window = [self.receiver_window.get_sequence_number(i) for i in range(self.window_size)]
+                
+                if header.fin == 1:
+                    self.recv_close()
+                    return
+
+                elif segment.seq not in seqs_in_window: #repeated message
+                    if segment.seq < TCPHeader().parse(self.last_message).seq:
+                        repeated_ack = TCPHeader().build_string(0, 1, 0, segment.seq)
+                        self.socket.sendto(repeated_ack.encode(), self.destination_addr)
+                
+                else: #new message
+                    receiver_window_index = seqs_in_window.index(segment.seq)
+
+                    print("seqs in window are: ", seqs_in_window)
+                    print("received seq is: ", segment.seq)
+                    print("index of that seq in window is: ", receiver_window_index)
+                    print("possible numbers from window: ",self.receiver_window.possible_sequence_numbers)
+                    
+                    bytes_received = segment.byte_len()
+                    
+                    ack = TCPHeader().build_string(0, 1, 0, self.receiver_window.get_sequence_number(receiver_window_index)) 
+                    self.socket.sendto(ack.encode(), self.destination_addr)
+
+                    self.receiver_window.put_data(segment.data, segment.seq, receiver_window_index)  
+                 
+                    self.bytes_left -= len(segment.data.encode())
+
+                    acum_message= self.update_receiver_window(acum_message)
+                    self.last_message = ack
+                    self.last_ack_received= segment
+                    #self.seq = TCPHeader().parse(ack).seq
+
+            except TimeoutError:
+                #print("current bytes: ",len(acum_message.encode()))
+                #print("bytes left: ", self.bytes_left)
+                #print("byte cap: ", byte_cap)
+                #print("last message: ", self.last_message)
+                
+                #print(self.last_ack_received)
+                if self.bytes_left <= 0:
+                    break 
+                continue
+        print(self.last_message)
+        self.seq = self.last_ack_received.seq 
+        return acum_message.encode()
 
 
+    def update_receiver_window(self, acumulated_message):
+        '''Moves sliding window of receiver and returns acumulated message'''
+        missing_slots_indexes = []
+        for slot_index in range(self.window_size):
+            slot = self.receiver_window.get_data(slot_index)
+            if  slot == "":
+                missing_slots_indexes.append(slot_index)
 
+        if len(missing_slots_indexes) == 0:
+            steps = self.window_size
+        else:
+            steps = missing_slots_indexes[0]
+        
+        for i in range(steps):
+            message_in_slot = self.receiver_window.get_data(i)
+            if message_in_slot == None:
+                break
+            acumulated_message += str(message_in_slot)
 
-
-
-
+        self.receiver_window.move_window(steps)
+        return acumulated_message
 
     def recv_using_go_back_n(self, buff_size):
 
         counter = 0
-        
+        self.socket.setblocking(False)
         while self.bytes_left == 0: #new recv
             try:
                 data, _ = self.socket.recvfrom(buff_size)
                 parsed_data = TCPHeader().parse(data.decode())
                
                 if parsed_data.fin == 1: #close connection
-                    print("fin msg arrived: ", parsed_data)
+                    #print("fin msg arrived: ", parsed_data)
                     self.recv_close()
                     return
 
                 elif not self.valid_ack_seq(parsed_data.seq, self.seq): #repeated message
-                    print("se reenvia mensaje. llegó {0} y tengo {1}".format(parsed_data.seq,self.seq))
-                    print(parsed_data)
-                    print("se enviará: ", self.last_message)
+                    #print("se reenvia mensaje. llegó {0} y tengo {1}".format(parsed_data.seq,self.seq))
+                    #print(parsed_data)
+                    #print("se enviará: ", self.last_message)
                     self.socket.sendto(self.last_message.encode(), self.destination_addr)
                 
                 else: #new message
                     bytes_received = parsed_data.byte_len()
-                    print(parsed_data)
+                    #print(parsed_data)
                     message_length = int(parsed_data.data)
                     self.bytes_left = message_length
                     ack = TCPHeader().build_string(0, 1, 0, self.seq)
                     self.socket.sendto(ack.encode(), self.destination_addr)
 
                     self.calc_possible_sequence_numbers()
-                    print(self.possible_sequence_numbers)
+                    #print(self.possible_sequence_numbers)
 
                     self.update_seq_go_back_n()
                     self.last_message = ack
@@ -580,8 +704,11 @@ class TCPSocket:
                     return
 
                 elif not self.valid_ack_seq(header.seq, self.seq): #repeated message
+                    print("not valid seq")
+                    print(header)
+                    print("my seq is: ", self.seq)
                     self.socket.sendto(self.last_message.encode(), self.destination_addr)
-                
+
                 else: #new message
                     bytes_received = header.byte_len()
                     acum_message += header.data
@@ -598,6 +725,7 @@ class TCPSocket:
                 #print("bytes left: ", self.bytes_left)
                 #print("byte cap: ", byte_cap)
                 #print("last message: ", self.last_message)
+                counter+=1
                 if counter%100000 == 0:
                     print(self.last_ack_received)
                 if self.bytes_left <= 0:
@@ -697,8 +825,8 @@ class TCPSocket:
                 
                 else:    
                     if fin_ack_header.fin != 1 or fin_ack_header.ack!= 1:
-                        print("sent: ", fin_header)
-                        print("received: ",fin_ack_header)
+                        #print("sent: ", fin_header)
+                        #print("received: ",fin_ack_header)
                         #raise FinError("Expected FIN + ACK, got {0} and {1}".format(fin_ack_header.fin, fin_ack_header.ack))
                         continue
                     if fin_ack_header.seq != self.seq+1:
@@ -723,8 +851,8 @@ class TCPSocket:
         '''
         This function is called after a socket receives a FIN message in recv.
         '''
-        print("ATEMPTING TO CLOSE CONNECTION")
-        print("------------------------------")
+        #print("ATEMPTING TO CLOSE CONNECTION")
+        #print("------------------------------")
         self.socket.setblocking(True)
         self.seq += 1
         fin_ack_header = TCPHeader().build_string(0, 1, 1, self.seq)
@@ -732,7 +860,7 @@ class TCPSocket:
         while not finalized:
             try:       
                 self.socket.sendto(fin_ack_header.encode(), self.destination_addr)
-                print("sent: ", fin_ack_header)
+                #print("sent: ", fin_ack_header)
                 self.last_message = fin_ack_header
 
                 ack, _ = self.socket.recvfrom(self.buff_size)
@@ -740,7 +868,7 @@ class TCPSocket:
 
                 if ack_header.seq < self.seq: #repeated message
 
-                    print("last message is:", self.last_message)
+                    #print("last message is:", self.last_message)
                     self.socket.sendto(self.last_message.encode(), self.destination_addr)
                     continue
 
