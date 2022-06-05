@@ -17,14 +17,14 @@ class CongestionControl:
             if self.ssthresh == None:
                 return
 
-            elif self.state >= self.ssthresh: 
+            elif self.cwnd >= self.ssthresh: 
                 self.state = self.possible_states[1]
                 self.first_timeout = True
 
         elif self.state == self.possible_states[1]:
             self.cwnd += self.mss/self.cwnd
 
-    def event_timemout(self):
+    def event_timeout(self):
         '''Handles timeouts according to current state'''
         if self.state == self.possible_states[0] and self.first_timeout:
             self.ssthresh = self.cwnd/2
@@ -36,5 +36,5 @@ class CongestionControl:
             self.ssthresh = None
 
     def get_cwnd(self):
-        return self.cwnd
+        return int(self.cwnd)
             
