@@ -2,6 +2,7 @@ from TCPSocket import TCPSocket, receive_full_message
 
 BUFF_SIZE=128
 ADDRESS = ('localhost', 8888)
+DEBUG= True
 
 # MODE= "selective_repeat"
 # MODE= "stop_and_wait"
@@ -18,7 +19,7 @@ while True:
     print("server connection seq number: ", connection.seq)
 
     while connection.destination_addr!= None:
-        message = receive_full_message(connection, BUFF_SIZE, mode= MODE)
+        message = receive_full_message(connection, BUFF_SIZE, mode= MODE, debug=DEBUG)
 
         if message == None:
             continue

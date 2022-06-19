@@ -21,9 +21,9 @@ class SlidingWindowCC:
         # fix data_list if needed
         for i in range(len(data_list)):
             if isinstance(data_list[i], int):
-                data_list[i] = str(data_list[i])
+                data_list[i] = str(data_list[i]).encode()
             if isinstance(data_list[i], str):
-                data_list[i] = data_list[i]
+                data_list[i] = data_list[i].encode()
 
         # generate seq_list
         self.seq_list = []
