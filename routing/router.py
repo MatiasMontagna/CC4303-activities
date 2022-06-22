@@ -1,5 +1,5 @@
 import socket
-from header import Header
+from header import IPHeader
 import sys
 from typing import Tuple, List
 
@@ -17,30 +17,32 @@ class Router:
         self.address = address if address[0] != 'localhost' else ('127.0.0.1', address[1])  
 
 
-    def get_final_destination(self, header_message: Header) -> tuple:
+    def get_final_destination(self, header_message: IPHeader) -> tuple:
         return (header_message.ip_address, header_message.port)
 
     def handle_message(self):
         data,_ = self.socket.recvfrom(1024)
-        header = Header().parse(data.decode())
+        header = IPHeader().parse(data.decode())
         final_destination = self.get_final_destination(header)
-
-        if final_destination == self.address :
+        if header.ttl <= 0:
+            return
+        elif final_destination == self.address :
             print(header.message)
         else:
             self.forward(header)
 
 
-    def forward(self, header:Header):
+    def forward(self, header:IPHeader):
         next_hop_address = self.routing_table_lookup(header)
         final_destination = self.get_final_destination(header)
         if next_hop_address == None:
             print("No routes to {0} for {1}".format(final_destination, header))
         else:
+            header.ttl -= 1
             self.socket.sendto(header.encode(), next_hop_address)
             print("Redirecting package '{0}' with final destination '{1}' from '{2}' to '{3}'".format(header, final_destination, self.address, next_hop_address))
 
-    def routing_table_lookup(self, header: Header):
+    def routing_table_lookup(self, header: IPHeader):
         '''Searches throughout the routing table to find if there exists a router to forward the message'''
         with open(self.routing_table_path, 'r') as routing_table:
             queues = routing_table.readlines()
@@ -80,7 +82,7 @@ class Router:
 
             routing_table.close()
 
-    def is_valid_cidr(self, ip_address_range, init_range_port, end_range_port, header:Header):
+    def is_valid_cidr(self, ip_address_range, init_range_port, end_range_port, header:IPHeader):
         '''Checks if the destination of the message is inside the cidr range'''
         
         base_ip, byte_mask = ip_address_range.split('/') 
@@ -109,7 +111,7 @@ def main():
     router = Router((ip_address, port), routing_table_filename)
 
     while True:
-        print("Waiting")
+        #print("Waiting")
         router.handle_message()
 
 if __name__ == "__main__":
