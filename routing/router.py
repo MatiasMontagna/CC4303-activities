@@ -1,6 +1,7 @@
 import socket
 from header import Header
 import sys
+from typing import Tuple, List
 
 class RoutingTable():
     pass
@@ -11,7 +12,10 @@ class Router:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 
         self.socket.bind(address)
         self.routing_table_path = routing_table_path
+        self.routing_table = open(self.routing_table_path, 'r')
+        self.exit_queues_counter = [0 for exit_queue in self.routing_table.readlines() ]
         self.address = address if address[0] != 'localhost' else ('127.0.0.1', address[1])  
+
 
     def get_final_destination(self, header_message: Header) -> tuple:
         return (header_message.ip_address, header_message.port)
@@ -39,16 +43,42 @@ class Router:
     def routing_table_lookup(self, header: Header):
         '''Searches throughout the routing table to find if there exists a router to forward the message'''
         with open(self.routing_table_path, 'r') as routing_table:
-            lines = routing_table.readlines()
-            for table_entry in lines:
-                ip_address_range, init_range_port, end_range_port, dest_ip, dest_port = table_entry.split(' ')
+            queues = routing_table.readlines()
+            possible_exits: List[Tuple[int,Tuple[str,int]]] =[]
+
+            for i in range(len(queues)):
+                ip_address_range,init_range_port, end_range_port, dest_ip, dest_port = queues[i].split(' ')
 
                 if self.is_valid_cidr(ip_address_range, int(init_range_port), int(end_range_port), header):
-                    return (dest_ip, int(dest_port))
+                    possible_exits.append((i,(dest_ip, int(dest_port))  ) )
+                    #return (dest_ip, int(dest_port))
+
+            if len(possible_exits) == 0:
+                return None
+
+            elif len(possible_exits) == 1:
+                self.exit_queues_counter[possible_exits[0][0]] += 1
+                return possible_exits[0][1]
+
+            else:
+                #multiple routes: round-robin
+                queue_indexes = [index for (index, address) in possible_exits]
+                less_used_exit_counter = 999999
+                less_used_exit_index = None
+
+                #the route that has been used less is picked
+                for index in queue_indexes:
+                    if self.exit_queues_counter[index] < less_used_exit_counter:
+                        less_used_exit_index = index
+                        less_used_exit_counter = self.exit_queues_counter[index]
+
+
+                for (index, address) in possible_exits:
+                    if index == less_used_exit_index:
+                        self.exit_queues_counter[index] += 1
+                        return address
 
             routing_table.close()
-
-        return None
 
     def is_valid_cidr(self, ip_address_range, init_range_port, end_range_port, header:Header):
         '''Checks if the destination of the message is inside the cidr range'''
